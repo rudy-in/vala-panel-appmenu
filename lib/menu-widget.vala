@@ -54,7 +54,7 @@ namespace Appmenu
                 });
             });
             mcontext.add_class("-vala-panel-appmenu-private");
-            Gtk.StyleContext.add_provider_for_screen(this.get_screen(), provider,Gtk.STYLE_PROVIDER_PRIORITY_APPLICATION);
+            context.add_provider_for_screen(this.get_screen(), provider,Gtk.STYLE_PROVIDER_PRIORITY_APPLICATION);
             //Setup menubar
             scroll_adj = new Gtk.Adjustment(0, 0, 0, 20, 20, 0);
             scroller = new Gtk.ScrolledWindow(scroll_adj, null);
