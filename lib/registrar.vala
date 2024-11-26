@@ -19,12 +19,8 @@
 using GLib;
 using Gtk;
 using DBus;
+using Key;
 
-namespace Key
-{
-    public const string COMPACT_MODE = "compact-mode";
-    public const string BOLD_APPLICATION_NAME = "bold-application-name";
-}
 
 namespace Appmenu {
     public class Constants {
