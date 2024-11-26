@@ -26,12 +26,16 @@ namespace Key
     public const string BOLD_APPLICATION_NAME = "bold-application-name";
 }
 
-namespace Appmenu
-{
+namespace Appmenu {
+    public class Constants {
+        public const string COMPACT_MODE = "compact-mode";
+        public const string BOLD_APPLICATION_NAME = "bold-application-name";
+    }
+
     public class MenuWidget : Gtk.Bin
     {
-        public bool compact_mode { get; set; } = false;
-        public bool bold_application_name { get; set; } = false;
+        public bool compact_mode;
+        public bool bold_application_name;
         private Gtk.Adjustment? scroll_adj = null;
         private Gtk.ScrolledWindow? scroller = null;
         private Gtk.CssProvider provider;
@@ -63,7 +67,6 @@ namespace Appmenu
             mcontext.add_class("-vala-panel-appmenu-private");
             Gtk.StyleContext.add_provider_for_screen(this.get_screen(), provider, Gtk.STYLE_PROVIDER_PRIORITY_APPLICATION);
 
-            // Setup menubar
             scroll_adj = new Gtk.Adjustment(0, 0, 0, 20, 20, 0);
             scroller = new Gtk.ScrolledWindow(scroll_adj, null);
             scroller.set_hexpand(true);
@@ -80,13 +83,11 @@ namespace Appmenu
             scroller.show();
             this.show();
 
-            // Initialize DBus Menu Registrar Proxy
             menu_registrar_proxy = new DBusMenuRegistrarProxy();
         }
 
         public MenuWidget()
         {
-            Object();
         }
 
         private void restock()
@@ -186,7 +187,6 @@ namespace Appmenu
             gtksettings.gtk_shell_shows_menubar = false;
         }
 
-        // Method to get menu for a specific window, using DBusMenuRegistrarProxy
         public void get_menu_for_window(uint window_id, out string name, out ObjectPath path)
         {
             path = new ObjectPath("/");
@@ -198,110 +198,109 @@ namespace Appmenu
             menu_registrar_proxy.get_menu_for_window(window_id, out name, out path);
         }
     }
+}
 
-    // Existing DBus-related code
-    public class DBusMenuRegistrarProxy : Object
+public class DBusMenuRegistrarProxy : Object
+{
+    public bool have_registrar { get; private set; }
+    private InnerRegistrar inner_registrar;
+    private OuterRegistrar outer_registrar;
+    private bool is_inner_registrar;
+    private uint owned_name;
+    private uint watched_name;
+
+    public DBusMenuRegistrarProxy()
     {
-        public bool have_registrar { get; private set; }
-        private InnerRegistrar inner_registrar;
-        private OuterRegistrar outer_registrar;
-        private bool is_inner_registrar;
-        private uint owned_name;
-        private uint watched_name;
+    }
 
-        public DBusMenuRegistrarProxy()
+    public signal void window_registered(uint window_id, string service, ObjectPath path);
+    public signal void window_unregistered(uint window_id);
+
+    private void on_bus_aquired(DBusConnection conn)
+    {
+        try
         {
+            inner_registrar = new InnerRegistrar();
+            outer_registrar = null;
+            conn.register_object(REG_OBJECT, inner_registrar);
+            inner_registrar.window_registered.connect((w, s, p) => { this.window_registered(w, s, p); });
+            inner_registrar.window_unregistered.connect((w) => { this.window_unregistered(w); });
         }
-
-        public signal void window_registered(uint window_id, string service, ObjectPath path);
-        public signal void window_unregistered(uint window_id);
-
-        private void on_bus_aquired(DBusConnection conn)
+        catch (IOError e)
         {
-            try
-            {
-                inner_registrar = new InnerRegistrar();
-                outer_registrar = null;
-                conn.register_object(REG_OBJECT, inner_registrar);
-                inner_registrar.window_registered.connect((w, s, p) => { this.window_registered(w, s, p); });
-                inner_registrar.window_unregistered.connect((w) => { this.window_unregistered(w); });
-            }
-            catch (IOError e)
-            {
-                stderr.printf("Could not register service. Waiting for external registrar\n");
-            }
+            stderr.printf("Could not register service. Waiting for external registrar\n");
         }
+    }
 
-        private void create_inner_registrar()
+    private void create_inner_registrar()
+    {
+        owned_name = Bus.own_name(BusType.SESSION, REG_IFACE, BusNameOwnerFlags.NONE,
+            on_bus_aquired,
+            () =>
+            {
+                have_registrar = true;
+                is_inner_registrar = true;
+            },
+            () =>
+            {
+                is_inner_registrar = false;
+                create_outer_registrar();
+            });
+    }
+
+    private void create_outer_registrar()
+    {
+        try
         {
-            owned_name = Bus.own_name(BusType.SESSION, REG_IFACE, BusNameOwnerFlags.NONE,
-                on_bus_aquired,
+            outer_registrar = Bus.get_proxy_sync(BusType.SESSION, REG_IFACE, REG_OBJECT);
+            watched_name = Bus.watch_name(BusType.SESSION, REG_IFACE, GLib.BusNameWatcherFlags.NONE,
                 () =>
                 {
+                    inner_registrar = null;
+                    is_inner_registrar = false;
                     have_registrar = true;
-                    is_inner_registrar = true;
                 },
                 () =>
                 {
-                    is_inner_registrar = false;
+                    have_registrar = false;
+                    Bus.unwatch_name(watched_name);
+                    is_inner_registrar = true;
+                    create_inner_registrar();
                     create_outer_registrar();
                 });
+            outer_registrar.window_registered.connect((w, s, p) => { this.window_registered(w, s, p); });
         }
-
-        private void create_outer_registrar()
+        catch (Exception e)
         {
+            stderr.printf("Error creating outer registrar: %s\n", e.Message);
+        }
+    }
+
+    public void get_menu_for_window(uint window, out string name, out ObjectPath path)
+    {
+        path = new ObjectPath("/");
+        if (!have_registrar)
+            return;
+
+        if (is_inner_registrar)
+            inner_registrar.get_menu_for_window(window, out name, out path);
+        else
             try
             {
-                outer_registrar = Bus.get_proxy_sync(BusType.SESSION, REG_IFACE, REG_OBJECT);
-                watched_name = Bus.watch_name(BusType.SESSION, REG_IFACE, GLib.BusNameWatcherFlags.NONE,
-                    () =>
-                    {
-                        inner_registrar = null;
-                        is_inner_registrar = false;
-                        have_registrar = true;
-                    },
-                    () =>
-                    {
-                        have_registrar = false;
-                        Bus.unwatch_name(watched_name);
-                        is_inner_registrar = true;
-                        create_inner_registrar();
-                        create_outer_registrar();
-                    });
-                outer_registrar.window_registered.connect((w, s, p) => { this.window_registered(w, s, p); });
+                outer_registrar.get_menu_for_window(window, out name, out path);
             }
-            catch (Exception e)
+            catch (Error e)
             {
-                stderr.printf("Error creating outer registrar: %s\n", e.Message);
+                stderr.printf("%s\n", e.message);
             }
-        }
+    }
 
-        public void get_menu_for_window(uint window, out string name, out ObjectPath path)
-        {
-            path = new ObjectPath("/");
-            if (!have_registrar)
-                return;
-
-            if (is_inner_registrar)
-                inner_registrar.get_menu_for_window(window, out name, out path);
-            else
-                try
-                {
-                    outer_registrar.get_menu_for_window(window, out name, out path);
-                }
-                catch (Error e)
-                {
-                    stderr.printf("%s\n", e.message);
-                }
-        }
-
-        ~DBusMenuRegistrarProxy()
-        {
-            if (is_inner_registrar)
-                Bus.unown_name(owned_name);
-            else
-                Bus.unwatch_name(watched_name);
+    ~DBusMenuRegistrarProxy()
+    {
+        if (is_inner_registrar)
+            Bus.unown_name(owned_name);
+        else
             Bus.unwatch_name(watched_name);
-        }
+        Bus.unwatch_name(watched_name);
     }
 }
