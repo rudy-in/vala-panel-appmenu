@@ -17,10 +17,14 @@
  */
 
 using GLib;
-using Key;
+//using Key;
 
 namespace Appmenu
 {
+    public class Constants {
+        public const string COMPACT_MODE = "compact-mode";
+        public const string BOLD_APPLICATION_NAME = "bold-application-name";
+    }
     public class MenuWidget: Gtk.Bin
     {
         public bool compact_mode {get; set; default = false;}
